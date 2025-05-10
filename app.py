@@ -7,7 +7,6 @@ from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
 import av
 import cv2
 
-# Load your YOLO model
 model = YOLO("detect.pt")  # Replace with your custom model path
 
 # App title
