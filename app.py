@@ -1,55 +1,86 @@
-import streamlit as st
+import gradio as gr
 import numpy as np
 from ultralytics import YOLO
 from PIL import Image
-import time
-from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
-import av
 import cv2
+import os
 
+# Load the YOLO model
 model = YOLO("detect.pt")  # Replace with your custom model path
 
-# App title
-st.title("📸 YOLO Model Detection")
+# Function to process image (for both uploaded images and webcam frames)
+def process_image(image):
+    if isinstance(image, str):  # If image is a file path
+        image = Image.open(image).convert("RGB")
+    elif isinstance(image, np.ndarray):  # If image is a numpy array
+        image = Image.fromarray(image).convert("RGB")
+    
+    img_np = np.array(image)
+    results = model(img_np)
+    annotated_img = results[0].plot()
+    annotated_img = cv2.cvtColor(annotated_img, cv2.COLOR_BGR2RGB)
+    return annotated_img
 
-# Sidebar for mode
-mode = st.sidebar.selectbox("Choose Mode", ["Webcam Detection", "Image Upload"])
+# Function for image upload mode
+def detect_image(image):
+    if image is None:
+        return None, "Please upload an image."
+    result = process_image(image)
+    return result, "Detection complete!"
 
-# ======================
-# Webcam Mode
-# ======================
+# Function for webcam mode
+def detect_webcam(video):
+    if video is None:
+        return None, "Please provide a video input."
+    # For Gradio, video input is a file path
+    cap = cv2.VideoCapture(video)
+    ret, frame = cap.read()
+    if not ret:
+        cap.release()
+        return None, "Error reading video frame."
+    
+    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    result = process_image(frame_rgb)
+    cap.release()
+    return result, "Webcam detection complete!"
 
-class VideoTransformer(VideoTransformerBase):
-    def __init__(self):
-        self.model = model
+# Gradio interface
+with gr.Blocks(title="YOLO Model Detection") as demo:
+    gr.Markdown("# 📸 YOLO Model Detection")
+    
+    # Mode selection
+    mode = gr.Radio(choices=["Image Upload", "Webcam Detection"], label="Choose Mode", value="Image Upload")
+    
+    # Image Upload Interface
+    with gr.Group(visible=True) as image_group:
+        gr.Markdown("### 🖼️ Upload an Image for Detection")
+        image_input = gr.Image(type="filepath", label="Upload Image")
+        image_output = gr.Image(label="Detection Result")
+        image_status = gr.Textbox(label="Status")
+        image_button = gr.Button("Detect Image")
+    
+    # Webcam Interface
+    with gr.Group(visible=False) as webcam_group:
+        gr.Markdown("### 🎥 Webcam Detection")
+        gr.Markdown("Note: Upload a short video or use your webcam to capture a frame.")
+        webcam_input = gr.Video(label="Webcam Input")
+        webcam_output = gr.Image(label="Detection Result")
+        webcam_status = gr.Textbox(label="Status")
+        webcam_button = gr.Button("Detect Webcam")
 
-    def transform(self, frame: av.VideoFrame) -> av.VideoFrame:
-        img = frame.to_ndarray(format="bgr24")
-        results = self.model(img)
-        annotated = results[0].plot()
-        annotated = cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB)
-        return av.VideoFrame.from_ndarray(annotated, format="rgb24")
+    # Logic to toggle visibility based on mode
+    def toggle_mode(selected_mode):
+        return {
+            image_group: gr.update(visible=selected_mode == "Image Upload"),
+            webcam_group: gr.update(visible=selected_mode == "Webcam Detection")
+        }
 
-if mode == "Webcam Detection":
-    st.subheader("🎥 Webcam Detection")
-    webrtc_streamer(key="yolo-webcam", video_transformer_factory=VideoTransformer)
+    mode.change(fn=toggle_mode, inputs=mode, outputs=[image_group, webcam_group])
 
-# ======================
-# Image Upload Mode
-# ======================
+    # Connect buttons to functions
+    image_button.click(fn=detect_image, inputs=image_input, outputs=[image_output, image_status])
+    webcam_button.click(fn=detect_webcam, inputs=webcam_input, outputs=[webcam_output, webcam_status])
 
-elif mode == "Image Upload":
-    st.subheader("🖼️ Upload an Image for Detection")
-
-    uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
-
-    if uploaded_file is not None:
-        image = Image.open(uploaded_file).convert("RGB")
-        img_np = np.array(image)
-
-        results = model(img_np)
-        annotated_img = results[0].plot()
-        annotated_img = cv2.cvtColor(annotated_img, cv2.COLOR_BGR2RGB)
-
-        st.image(annotated_img, caption="Detection Result", use_container_width=True)
-        st.success("Detection complete!")
+# Launch the app
+if __name__ == "__main__":
+    demo.launch()
